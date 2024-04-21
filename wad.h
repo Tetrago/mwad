@@ -50,6 +50,22 @@ struct mwad
 struct mwad* mwad_open(const char* pPath);
 
 /**
+ * \brief          Find if a path is a directory, not a file
+ * \param[in]      pWad: mwad structure
+ * \param[in]      pPath: Path of directory to find
+ * \return         Returns non zero when found, zero otherwise
+ */
+int mwad_is_directory(struct mwad* pWad, const char* pPath);
+
+/**
+ * \brief          Find if a path is a file, not a directory
+ * \param[in]      pWad: mwad structure
+ * \param[in]      pPath: Path of file to find
+ * \return         Returns size of file when found, zero otherwise
+ */
+uint32_t mwad_get_file(struct mwad* pWad, const char* pPath);
+
+/**
  * \brief          Lists all entries in a directory
  * \param[in]      pWad: mwad structure
  * \param[in]      pPath: Path of directory to list, with or without trailing slash

@@ -7,10 +7,22 @@
   outputs = { flake-utils, nixpkgs, ... }: flake-utils.lib.eachDefaultSystem (system: let
     pkgs = nixpkgs.legacyPackages.${system};
   in {
-    packages.default = pkgs.stdenv.mkDerivation {
+    devShells.default = pkgs.mkShell {
       name = "mwad";
 
+      buildInputs = with pkgs; [
+        fuse
+      ];
+    };
+
+    packages.default = pkgs.stdenv.mkDerivation {
+      name = "mwad";
       src = ./.;
+
+      buildInputs = with pkgs; [
+        fuse
+        pkg-config
+      ];
 
       installPhase = ''
         mkdir -p $out/bin

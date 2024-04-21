@@ -16,10 +16,9 @@
 #define ERR_UNTERMINATED_NAMESPACE             "Namespace missing end"
 #define ERR_ENTRY_CORRUPT                      "Attempting to read corrupted entry"
 #define ERR_INVALID_OFFSET                     "Offset into content is larger than content"
-#define ERR_INVALID_SIZE                       "Size of content requested is larget than content"
 #define ERR_INVALID_PATH                       "Specified invalid path"
 
-static const char* gError = NULL;
+static const char* last_error = NULL;
 
 static struct mwad_node* new_node(struct mwad* pWad)
 {
@@ -47,17 +46,19 @@ static struct mwad_node* from_entry(struct mwad* pWad, const char* pEntry)
 
 static struct mwad_node* load_node(struct mwad* pWad, uint32_t* pCount)
 {
-    char entry[sizeof(uint32_t) * 2 + sizeof(char) * 8];
-    if(fread(entry, sizeof(entry), 1, pWad->file) < 1)
+    char entry[sizeof(uint32_t) * 2 + sizeof(char) * 8 + 1];
+    entry[sizeof(entry) - 1] = 0;
+
+    if(fread(entry, sizeof(entry) - 1, 1, pWad->file) < 1)
     {
-        gError = ERR_READ_ENTRY;
+        last_error = ERR_READ_ENTRY;
         return NULL;
     }
 
     --(*pCount);
 
     const char* pName = entry + sizeof(uint32_t) * 2;
-    size_t len = strnlen(pName, 8);
+    size_t len = strlen(pName);
 
     if(len == 4 && pName[0] == 'E' && pName[2] == 'M' && isdigit(pName[1]) && isdigit(pName[3]))
     {
@@ -70,7 +71,7 @@ static struct mwad_node* load_node(struct mwad* pWad, uint32_t* pCount)
         {
             if(*pCount == 0)
             {
-                gError = ERR_INCOMPLETE_MARKER;
+                last_error = ERR_INCOMPLETE_MARKER;
                 return NULL;
             }
 
@@ -79,7 +80,7 @@ static struct mwad_node* load_node(struct mwad* pWad, uint32_t* pCount)
 
             if(pNext->size == 0)
             {
-                gError = ERR_NESTED_MARKER;
+                last_error = ERR_NESTED_MARKER;
                 return NULL;
             }
 
@@ -92,7 +93,7 @@ static struct mwad_node* load_node(struct mwad* pWad, uint32_t* pCount)
 
         return pNode;
     }
-    else if(len >= 7 && strncmp(pName + len - 6, "_START", 6) == 0)
+    else if(len >= 7 && strcmp(pName + len - 6, "_START") == 0)
     {
         // Beginning of namespace
 
@@ -107,6 +108,9 @@ static struct mwad_node* load_node(struct mwad* pWad, uint32_t* pCount)
 
             if(pNext == pWad->node)
             {
+                pNode->down = pNode->next;
+                pNode->next = NULL;
+
                 return pNode;
             }
             else
@@ -116,10 +120,10 @@ static struct mwad_node* load_node(struct mwad* pWad, uint32_t* pCount)
             }
         }
 
-        gError = ERR_UNTERMINATED_NAMESPACE;
+        last_error = ERR_UNTERMINATED_NAMESPACE;
         return NULL;
     }
-    else if(len >= 5 && len < 7 && strncmp(pName + len - 4, "_END", 4) == 0)
+    else if(len >= 5 && len < 7 && strcmp(pName + len - 4, "_END") == 0)
     {
         // End of namespace
 
@@ -138,14 +142,14 @@ struct mwad* mwad_open(const char* pPath)
     FILE* file = fopen(pPath, "r");
     if(!file)
     {
-        gError = ERR_OPEN;
+        last_error = ERR_OPEN;
         return NULL;
     }
 
     char sig[4];
     if(fread(sig, sizeof(char), 4, file) < 4 || sig[1] != 'W' || sig[2] != 'A' || sig[3] != 'D')
     {
-        gError = ERR_INVALID_SIGNATURE;
+        last_error = ERR_INVALID_SIGNATURE;
         goto close;
     }
 
@@ -154,19 +158,19 @@ struct mwad* mwad_open(const char* pPath)
 
     if(fread(&count, sizeof(uint32_t), 1, file) < 1 || count == 0)
     {
-        gError = ERR_READ_HEADER;
+        last_error = ERR_READ_HEADER;
         goto close;
     }
 
     if(fread(&offset, sizeof(uint32_t), 1, file) < 1)
     {
-        gError = ERR_READ_HEADER;
+        last_error = ERR_READ_HEADER;
         goto close;
     }
 
     if(fseek(file, offset, SEEK_SET) != 0)
     {
-        gError = ERR_SEEK_DESCRIPTORS;
+        last_error = ERR_SEEK_DESCRIPTORS;
         goto close;
     }
 
@@ -231,7 +235,7 @@ static struct mwad_node* search_directory(struct mwad_node* pNode, const char* p
         pNode = pNode->next;
     }
 
-    gError = ERR_DIR_NOT_FOUND;
+    last_error = ERR_DIR_NOT_FOUND;
     return NULL;
 }
 
@@ -269,8 +273,20 @@ static struct mwad_node* search_file(struct mwad* pWad, const char* pPath)
         pNode = pNode->next;
     }
 
-    gError = ERR_FILE_NOT_FOUND;
+    last_error = ERR_FILE_NOT_FOUND;
     return NULL;
+}
+
+int mwad_is_directory(struct mwad* pWad, const char* pPath)
+{
+    return search_directory(pWad->node, pPath + 1) != NULL;
+}
+
+uint32_t mwad_get_file(struct mwad* pWad, const char* pPath)
+{
+    struct mwad_node* pNode = search_file(pWad, pPath);
+    if(pNode) return pNode->size;
+    return 0;
 }
 
 char* mwad_list_directory(struct mwad* pWad, const char* pPath, int* pCount)
@@ -311,19 +327,18 @@ size_t mwad_read(struct mwad* pWad, const char* pPath, size_t offset, size_t siz
 
     if(offset >= pNode->size)
     {
-        gError = ERR_INVALID_OFFSET;
+        last_error = ERR_INVALID_OFFSET;
         return 0;
     }
 
-    if(offset + size >= pNode->size)
+    if(offset + size > pNode->size)
     {
-        gError = ERR_INVALID_SIZE;
-        return 0;
+        size = pNode->size - offset;
     }
 
     if(fseek(pWad->file, pNode->offset + offset, SEEK_SET) != 0)
     {
-        gError = ERR_ENTRY_CORRUPT;
+        last_error = ERR_ENTRY_CORRUPT;
         return 0;
     }
 
@@ -346,9 +361,9 @@ void mwad_close(struct mwad* pWad)
 
 const char* mwad_last_error()
 {
-    if(!gError) return NULL;
+    if(!last_error) return NULL;
 
-    const char* pErr = gError;
-    gError = NULL;
+    const char* pErr = last_error;
+    last_error = NULL;
     return pErr;
 }

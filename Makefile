@@ -11,5 +11,5 @@ all: mwad libwad.a
 libwad.a: wad.o
 	$(AR) -crs $@ $^
 
-mwad: libwad.a main.o
-	$(CC) -o $@ $(filter %.o,$^) -L. $(patsubst lib%.a,-l%,$(filter %.a,$^))
+mwad: libwad.a main.c
+	$(CC) -o $@ $(filter %.c,$^) -L. $(patsubst lib%.a,-l%,$(filter %.a,$^)) $(shell pkg-config fuse --cflags --libs)
